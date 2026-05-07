@@ -2,4 +2,5 @@
 
     public record OrderCreated(Guid OrderId, string CustomerName);
     public record OrderConfirmed(Guid OrderId, string RestaurantName);
-    public record CourierAssigned(Guid OrderId, Guid CourierName);
+    public record CourierAssigned(Guid OrderId, Guid CourierId, string CourierName);
+    public record DeliveryAccepted(Guid OrderId, string CourierName);

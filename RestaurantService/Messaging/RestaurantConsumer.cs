@@ -1,7 +1,6 @@
 ﻿using System.Text;
 using System.Text.Json;
 using Contracts;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;

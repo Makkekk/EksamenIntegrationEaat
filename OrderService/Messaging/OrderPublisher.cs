@@ -1,7 +1,7 @@
 ﻿using System.Text;
 using System.Text.Json;
 using RabbitMQ.Client;
-using Contracts;
+
 
 namespace OrderService.Messaging;
 

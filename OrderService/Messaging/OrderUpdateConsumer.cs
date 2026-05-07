@@ -41,6 +41,8 @@ public class OrderUpdateConsumer : BackgroundService
             {
                 var confirmed = JsonSerializer.Deserialize<OrderConfirmed>(json);
                 UpdateDatabase(confirmed.OrderId, "Confirmed by" + confirmed.RestaurantName);
+                
+                NotifyCustomer(confirmed.OrderId, $"Din mad er bekræftet af {confirmed.RestaurantName} og tilberedningen er startet!");
             }
             if (ea.RoutingKey == "courier.assigned")
             {
@@ -58,4 +60,6 @@ public class OrderUpdateConsumer : BackgroundService
     {
         Console.WriteLine($" [DATABASE] Ordre #{orderId} opdateret til: {status}");
     }
+    private void  NotifyCustomer(Guid orderId, string message)
+    {Console.WriteLine($"[NOTIFIKATION] Besked sendt til kunde for ordre #{orderId}: {message}" );}
 }

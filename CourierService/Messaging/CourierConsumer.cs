@@ -1,61 +1,79 @@
 ﻿using System.Text;
 using System.Text.Json;
 using Contracts;
-using Microsoft.AspNetCore.Mvc.ModelBinding;
+using CourierService.Data;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
 namespace CourierService.Messaging;
 
-public class CourierConsumer :  BackgroundService
+public class CourierConsumer : BackgroundService
 {
     private readonly string hostname = "localhost";
+    private readonly IServiceScopeFactory _scopeFactory;
 
+    public CourierConsumer(IServiceScopeFactory scopeFactory)
+    {
+        _scopeFactory = scopeFactory;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var factory = new ConnectionFactory { HostName = hostname };
-         var connection = await factory.CreateConnectionAsync(cancellationToken: stoppingToken);
-         var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
+        var connection = await factory.CreateConnectionAsync(cancellationToken: stoppingToken);
+        var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
 
-        await channel.ExchangeDeclareAsync("eaat_exchange", ExchangeType.Topic,cancellationToken:stoppingToken);
+        await channel.ExchangeDeclareAsync("eaat_exchange", ExchangeType.Topic, cancellationToken: stoppingToken);
+        await channel.QueueDeclareAsync("courier_queue", durable: true, exclusive: false, autoDelete: false,
+            cancellationToken: stoppingToken);
 
-        //kø til tilbud
-        await channel.QueueDeclareAsync("courier_offers", durable: true, exclusive: false, autoDelete: false,cancellationToken: stoppingToken);
-        await channel.QueueBindAsync("courier_offers", "eaat_exchange", "order.confirmed", cancellationToken: stoppingToken);
-
+        // Lytter på bekræftede ordrer fra restauranten
+        await channel.QueueBindAsync("courier_queue", "eaat_exchange", "order.confirmed", cancellationToken: stoppingToken);
+        await channel.QueueBindAsync("courier_queue", "eaat_exchange", "courier.broadcast.taken", cancellationToken: stoppingToken);
         var consumer = new AsyncEventingBasicConsumer(channel);
 
         consumer.ReceivedAsync += async (Model, ea) =>
         {
             var body = ea.Body.ToArray();
             var json = Encoding.UTF8.GetString(body);
-            var confirmedOrder = JsonSerializer.Deserialize<OrderConfirmed>(json);
 
-            if (confirmedOrder != null)
+            if (ea.RoutingKey == "order.confirmed")
             {
-                Console.WriteLine(
-                    $" [x] Bud-system: Søger bud til ordre {confirmedOrder.OrderId} fra {confirmedOrder.RestaurantName}");
+                var order = JsonSerializer.Deserialize<OrderConfirmed>(json);
 
+                if (order != null)
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<CourierDbContext>();
 
-                //Her tildels bud
-                var assigment = new CourierAssigned(confirmedOrder.OrderId, Guid.NewGuid());
-                var responseBody = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(assigment));
+                    // Gem ordren som et tilbud i databasen
+                    db.DeliveryOffers.Add(new DeliveryOffer
+                    {
+                        OrderId = order.OrderId,
+                        RestaurantName = order.RestaurantName,
+                        IsAssigned = false
+                    });
 
-                //Send besked om at bud er fundet
-                await channel.BasicPublishAsync(
-                    exchange: "eaat_exchange",
-                    routingKey: "courier.assigned",
-                    body: responseBody,
-                    cancellationToken: stoppingToken);
-
-                Console.WriteLine($" [v] Bud tildelt til ordre #{confirmedOrder.OrderId}");
+                    await db.SaveChangesAsync(stoppingToken);
+                    Console.WriteLine($" [DB] Ordre #{order.OrderId} gemt i databasen og klar til bud!");
+                }
             }
 
-            await channel.BasicAckAsync(ea.DeliveryTag, false,cancellationToken: stoppingToken);
+            if (ea.RoutingKey == "courier.broadcast.taken")
+            {
+                var update = JsonSerializer.Deserialize<JsonElement>(json);
+                var orderId = update.GetProperty("orderId").GetString();
+                
+                Console.WriteLine($"[BROADCAST] Opgave #{orderId} er blevet taget af et andet bud. Fjernet fra listen...");
+            }
+
+            await channel.BasicAckAsync(ea.DeliveryTag, false, cancellationToken: stoppingToken);
         };
-        await channel.BasicConsumeAsync("courier_offers", false, consumer: consumer,cancellationToken: stoppingToken);
+
+        await channel.BasicConsumeAsync("courier_queue", false, consumer, cancellationToken: stoppingToken);
         await Task.Delay(Timeout.Infinite, stoppingToken);
     }
 }
+
