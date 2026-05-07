@@ -6,7 +6,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-        <RootNamespace>ResturantService</RootNamespace>
+        <RootNamespace>RestaurantService</RootNamespace>
     </PropertyGroup>
 
     <ItemGroup>

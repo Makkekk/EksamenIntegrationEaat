@@ -29,10 +29,10 @@ services:
     depends_on:
       - RabbitMQ
 
-  resturantservice:
-    image: resturantservice
+  RestaurantService:
+    image: restaurantservice
     build:
       context: .
-      dockerfile: ResturantService/Dockerfile
+      dockerfile: RestaurantService/Dockerfile
     depends_on:
       - RabbitMQ
