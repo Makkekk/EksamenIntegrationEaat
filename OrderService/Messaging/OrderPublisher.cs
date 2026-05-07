@@ -1,8 +1,9 @@
 ﻿using System.Text;
 using System.Text.Json;
 using RabbitMQ.Client;
+using Contracts;
 
-namespace OrderService;
+namespace OrderService.Messaging;
 
 public class OrderPublisher
 {
@@ -14,8 +15,8 @@ public class OrderPublisher
         {
             HostName = hostname
         };
-        using var connection = await factory.CreateConnectionAsync();
-        using var channel = await connection.CreateChannelAsync();
+        var connection = await factory.CreateConnectionAsync();
+        var channel = await connection.CreateChannelAsync();
 
         await channel.ExchangeDeclareAsync(exchange: "eaat_exchange", type: ExchangeType.Topic);
         
