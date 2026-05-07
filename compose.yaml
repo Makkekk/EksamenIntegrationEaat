@@ -1,0 +1,38 @@
+﻿version: '3.8'
+
+services:
+  # --- MOTOREN (RabbitMQ) ---
+  RabbitMQ:
+    image: rabbitmq:3-management
+    container_name: eaat-mq
+    ports:
+      - "5672:5672"   # AMQP (Beskeder)
+      - "15672:15672" # Management UI (Dashboard)
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+
+  # --- SERVICES ---
+  courierService:
+    image: courierservice
+    build:
+      context: .
+      dockerfile: CourierService/Dockerfile
+    depends_on:
+      - RabbitMQ
+
+  orderService:
+    image: orderservice
+    build:
+      context: .
+      dockerfile: OrderService/Dockerfile
+    depends_on:
+      - RabbitMQ
+
+  resturantservice:
+    image: resturantservice
+    build:
+      context: .
+      dockerfile: ResturantService/Dockerfile
+    depends_on:
+      - RabbitMQ
