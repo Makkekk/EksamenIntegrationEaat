@@ -1,68 +1,103 @@
 # Eaat - System Arkitektur & Dokumentation
 
-Denne dokumentation beskriver kernesystemet i Eaat-platformen, en skalerbar microservice-løsning bygget i C# .NET med RabbitMQ som besked-motor.
+Denne dokumentation beskriver kernesystemet i Eaat-platformen, en skalerbar microservice-lÃ¸sning bygget i C# .NET med RabbitMQ som besked-motor.
 
 ## Systemoversigt
 
-Systemet består af tre uafhængige services, der kommunikerer asynkront via en **Topic Exchange** i RabbitMQ. Dette sikrer høj skalerbarhed og robusthed (fejltolerance), hvis en del af systemet midlertidigt er nede.
+Systemet bestÃ¥r af tre uafhÃ¦ngige services, der kommunikerer asynkront via en **Topic Exchange** i RabbitMQ. Dette sikrer hÃ¸j skalerbarhed og robusthed (fejltolerance), hvis en del af systemet midlertidigt er nede.
 
-### Arkitektur-diagram (Mermaid)
+### Arkitektur-diagram (Flow & Integration)
 
 ```mermaid
 graph TD
-    subgraph "Messaging Layer (RabbitMQ)"
-        EX[eaat_exchange - Topic]
-        
-        RQ[restaurant_order Queue]
-        CQ[courier_queue Queue]
-        OQ[order_updates Queue]
+    %% Node Styles
+    classDef service fill:#2d3436,stroke:#00cec9,stroke-width:2px,color:#fff
+    classDef rabbit fill:#636e72,stroke:#fdcb6e,stroke-width:2px,color:#fff
+    classDef actor fill:#dfe6e9,stroke:#2d3436,stroke-width:2px,color:#2d3436
+    classDef db fill:#55efc4,stroke:#00b894,stroke-width:2px,color:#2d3436
+
+    %% External Actors
+    Customer((Sulten Kunde)):::actor
+    Couriers((Alle Bude)):::actor
+
+    subgraph Services [Logiske Services]
+        OS[OrderService]:::service
+        RS[RestaurantService]:::service
+        CS[CourierService]:::service
     end
 
-    subgraph "Microservices (.NET)"
-        OS[OrderService]
-        RS[RestaurantService]
-        CS[CourierService]
+    subgraph Databases [Persistens]
+        DB1[(Order DB)]:::db
+        DB2[(Courier DB)]:::db
     end
 
-    %% Flow 1: Order Placement
-    OS -- "1. Publish: order.created" --> EX
-    EX -- "Routing" --> RQ
+    subgraph RabbitMQ [Message Broker]
+        EX{eaat_exchange <br/> Topic Exchange}:::rabbit
+        RQ[[restaurant_order <br/> Queue]]:::rabbit
+        OQ[[order_updates <br/> Queue]]:::rabbit
+        CQ[[courier_queue <br/> Queue]]:::rabbit
+    end
+
+    %% Database Connections
+    OS --- DB1
+    CS --- DB2
+
+    %% Flow 1: Kunden bestiller
+    Customer -- "1. HTTP POST /orders" --> OS
+    OS -. "2. Publish: order.created" .-> EX
+    EX -- "Routing: order.created" --> RQ
     RQ -- "Consume" --> RS
 
-    %% Flow 2: Restaurant Confirmation
-    RS -- "2. Publish: order.confirmed" --> EX
-    EX -- "Routing" --> OQ
-    EX -- "Routing" --> CQ
-    
-    OQ -- "3. Notify Customer & Update DB" --> OS
-    CQ -- "4. Create Delivery Offer" --> CS
+    %% Flow 2: Restauranten bekrÃ¦fter
+    RS -. "3. Publish: order.confirmed" .-> EX
+    EX -- "Routing: order.confirmed" --> OQ
+    EX -- "Routing: order.confirmed" --> CQ
 
-    %% Flow 3: Courier Competition (First-come-first-served)
-    CS -- "5. POST /accept (Courier wins)" --> CS
-    CS -- "6. Publish: courier.assigned" --> EX
-    CS -- "7. Broadcast: courier.broadcast.taken" --> EX
+    %% Flow 3: Notificering & Udbud
+    OQ -- "4. Update Status & Notify" --> OS
+    OS -- "Push: 'Maden er pÃ¥ vej'" --> Customer
     
-    EX -- "8. Notify Customer: Courier on way" --> OQ
-    EX -- "9. Notify other couriers: Task taken" --> CQ
+    CQ -- "5. Persist Offer" --> CS
+    CS -- "6. GET /offers" --> Couriers
+
+    %% Flow 4: FÃ¸rst-til-mÃ¸lle accept
+    Couriers -- "7. POST /accept (FÃ¸rst-til-mÃ¸lle)" --> CS
+    CS -. "8. Publish: courier.assigned" .-> EX
+    CS -. "9. Publish: courier.broadcast.taken" .-> EX
+    
+    EX -- "Routing: courier.assigned" --> OQ
+    EX -- "Routing: courier.broadcast.taken" --> CQ
+    
+    OQ -- "10. Update Status" --> OS
+    OS -- "Push: 'Bud er fundet'" --> Customer
 ```
 
 ## Tekniske Valg & Implementering
 
 ### 1. Kommunikation (RabbitMQ)
 Vi bruger en **Topic Exchange** (`eaat_exchange`), da det giver den mest fleksible routing. 
-- **Direct Messaging:** Bruges når en specifik service skal modtage en besked (f.eks. `order.created` til restauranten).
-- **Broadcast Messaging:** Bruges til at informere alle interesserede parter om en statusændring (f.eks. `courier.broadcast.taken`, så alle bud-instanser ved, at opgaven er væk).
+- **Direct Messaging:** Bruges nÃ¥r en specifik service skal modtage en besked (f.eks. `order.created` til restauranten).
+- **Broadcast Messaging:** Bruges til at informere alle interesserede parter om en statusÃ¦ndring (f.eks. `courier.broadcast.taken`, sÃ¥ alle bud-instanser ved, at opgaven er vÃ¦k).
 
-### 2. Skalerbarhed & Pålidelighed
-Da alle services kører i hver deres Docker-container (se `compose.yaml`), kan de skaleres uafhængigt. RabbitMQ fungerer som en buffer; hvis `RestaurantService` er nede, bliver ordrerne liggende i køen, indtil servicen er klar igen.
+### 2. Databases & Persistens
+Hver service har sin egen database-instans (Database per Service mÃ¸nstret). 
+- **Order DB:** Holder styr pÃ¥ ordrens tilstand og kundedata.
+- **Courier DB:** Holder styr pÃ¥ ledige leveringsopgaver og hvem der er tildelt hvilken opgave.
+Dette sikrer, at services kan kÃ¸re og skalere uafhÃ¦ngigt af hinanden.
 
-### 3. Først-til-mølle (Race Conditions)
-Logikken for tildeling af bud ligger i `CourierService`. Ved at bruge en atomar opdatering af databasen (`IsAssigned = true`), sikrer vi, at kun det første bud, der rammer API'et, får opgaven. Alle efterfølgende forsøg får en fejlbesked.
+### 3. Skalerbarhed & PÃ¥lidelighed
+Da alle services kÃ¸rer i hver deres Docker-container (se `compose.yaml`), kan de skaleres uafhÃ¦ngigt. RabbitMQ fungerer som en buffer; hvis `RestaurantService` er nede, bliver ordrerne liggende i kÃ¸en, indtil servicen er klar igen.
 
-### 4. Datakonsistens
-Systemet benytter **Eventual Consistency**. I stedet for én stor låst transaktion på tværs af services, sendes beskeder der opdaterer de respektive systemer asynkront. Dette er en "best practice" inden for microservices for at undgå flaskehalse.
+### 4. FÃ¸rst-til-mÃ¸lle (Race Conditions)
+Logikken for tildeling af bud ligger i `CourierService`. Ved at bruge en atomar opdatering af databasen (`IsAssigned = true`), sikrer vi, at kun det fÃ¸rste bud, der rammer API'et, fÃ¥r opgaven. Alle efterfÃ¸lgende forsÃ¸g fÃ¥r en fejlbesked.
 
-## Sådan køres systemet
+### 5. Datakonsistens
+Systemet benytter **Eventual Consistency**. I stedet for Ã©n stor lÃ¥st transaktion pÃ¥ tvÃ¦rs af services, sendes beskeder der opdaterer de respektive systemer asynkront. Dette er en "best practice" inden for microservices for at undgÃ¥ flaskehalse.
+
+### 6. Overvejelser om en separat NotificationService
+I denne prototype hÃ¥ndteres notificering af kunden direkte i `OrderService`. I et stÃ¸rre produktionsmiljÃ¸ ville man med fordel kunne udskille dette i en dedikeret **NotificationService**.
+
+## SÃ¥dan kÃ¸res systemet
 1. Start infrastrukturen: `docker-compose up -d` (Starter RabbitMQ).
 2. Start de tre services (`OrderService`, `RestaurantService`, `CourierService`).
-3. Brug Scalar/Swagger på de respektive porte for at teste endpoints.
+3. Brug Scalar/Swagger pÃ¥ de respektive porte for at teste endpoints.
