@@ -1,6 +1,8 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using Contracts;
+using OrderService.Data;
+using OrderService.Models;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
@@ -9,11 +11,15 @@ namespace OrderService.Messaging;
 public class OrderUpdateConsumer : BackgroundService
 {
     private readonly string hostname = "localhost";
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    public OrderUpdateConsumer(IServiceScopeFactory scopeFactory)
+    {
+        _scopeFactory = scopeFactory;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        
-        
         var factory = new ConnectionFactory
         {
             HostName = hostname
@@ -37,17 +43,27 @@ public class OrderUpdateConsumer : BackgroundService
             var body = ea.Body.ToArray();
             var json = Encoding.UTF8.GetString(body);
 
-            if (ea.RoutingKey == "order.confirmed")
+            using (var scope = _scopeFactory.CreateScope())
             {
-                var confirmed = JsonSerializer.Deserialize<OrderConfirmed>(json);
-                UpdateDatabase(confirmed.OrderId, "Confirmed by" + confirmed.RestaurantName);
-                
-                NotifyCustomer(confirmed.OrderId, $"Din mad er bekræftet af {confirmed.RestaurantName} og tilberedningen er startet!");
-            }
-            if (ea.RoutingKey == "courier.assigned")
-            {
-                var assigned = JsonSerializer.Deserialize<CourierAssigned>(json);
-                UpdateDatabase(assigned.OrderId, "Courier assigned: " + assigned.CourierName);
+                var db = scope.ServiceProvider.GetRequiredService<OrderDbContext>();
+
+                if (ea.RoutingKey == "order.confirmed")
+                {
+                    var confirmed = JsonSerializer.Deserialize<OrderConfirmed>(json);
+                    if (confirmed != null)
+                    {
+                        await UpdateDatabase(db, confirmed.OrderId, "Confirmed", confirmed.RestaurantName, null);
+                        NotifyCustomer(confirmed.OrderId, $"Din mad er bekræftet af {confirmed.RestaurantName} og tilberedningen er startet!");
+                    }
+                }
+                if (ea.RoutingKey == "courier.assigned")
+                {
+                    var assigned = JsonSerializer.Deserialize<CourierAssigned>(json);
+                    if (assigned != null)
+                    {
+                        await UpdateDatabase(db, assigned.OrderId, "CourierAssigned", null, assigned.CourierName);
+                    }
+                }
             }
             
             await channel.BasicAckAsync(ea.DeliveryTag, false, cancellationToken: stoppingToken);
@@ -56,10 +72,26 @@ public class OrderUpdateConsumer : BackgroundService
         await Task.Delay(Timeout.Infinite, stoppingToken);
     }
 
-    private void UpdateDatabase(Guid orderId, string status)
+    private async Task UpdateDatabase(OrderDbContext db, Guid orderId, string status, string? restaurantName, string? courierName)
     {
-        Console.WriteLine($" [DATABASE] Ordre #{orderId} opdateret til: {status}");
+        var order = await db.Orders.FindAsync(orderId);
+        if (order != null)
+        {
+            order.Status = status;
+            if (restaurantName != null) order.RestaurantName = restaurantName;
+            if (courierName != null) order.CourierName = courierName;
+            
+            await db.SaveChangesAsync();
+            Console.WriteLine($" [DATABASE] Ordre #{orderId} opdateret til: {status} i databasen.");
+        }
+        else
+        {
+            Console.WriteLine($" [DATABASE] Fejl: Ordre #{orderId} blev ikke fundet!");
+        }
     }
-    private void  NotifyCustomer(Guid orderId, string message)
-    {Console.WriteLine($"[NOTIFIKATION] Besked sendt til kunde for ordre #{orderId}: {message}" );}
+    
+    private void NotifyCustomer(Guid orderId, string message)
+    {
+        Console.WriteLine($"[NOTIFIKATION] Besked sendt til kunde for ordre #{orderId}: {message}" );
+    }
 }

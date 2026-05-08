@@ -40,8 +40,6 @@ app.MapPost("/accept/{orderId}/{name}", async (Guid orderId, string name, Courie
 
     if (offer == null || offer.IsAssigned)
         return Results.BadRequest("Opgaven er ikke længere ledig.");
-    
-    
 
     // Gem tildeling (Først-til-mølle)
     offer.IsAssigned = true;
@@ -63,7 +61,7 @@ app.MapPost("/accept/{orderId}/{name}", async (Guid orderId, string name, Courie
     
     await channel.BasicPublishAsync(
         exchange: "eaat_exchange",
-        routingKey: "delivery.broadcast.taken",
+        routingKey: "courier.broadcast.taken",
         body: taskTakenBody);
 
     return Results.Ok($"Success! Du har fået opgaven #{orderId}.");
