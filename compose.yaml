@@ -18,6 +18,8 @@ services:
     build:
       context: .
       dockerfile: CourierService/Dockerfile
+    environment:
+      - RABBITMQ_HOST=RabbitMQ
     depends_on:
       - RabbitMQ
 
@@ -26,6 +28,8 @@ services:
     build:
       context: .
       dockerfile: OrderService/Dockerfile
+    environment:
+      - RABBITMQ_HOST=RabbitMQ
     depends_on:
       - RabbitMQ
 
@@ -34,5 +38,7 @@ services:
     build:
       context: .
       dockerfile: RestaurantService/Dockerfile
+    environment:
+      - RABBITMQ_HOST=RabbitMQ
     depends_on:
       - RabbitMQ
