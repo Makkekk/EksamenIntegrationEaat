@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.Json;
 using Contracts;
 using OrderService.Data;
-using OrderService.Models;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 
@@ -62,6 +61,7 @@ public class OrderUpdateConsumer : BackgroundService
                     if (assigned != null)
                     {
                         await UpdateDatabase(db, assigned.OrderId, "CourierAssigned", null, assigned.CourierName);
+                        NotifyCustomer(assigned.OrderId, $"Bud fundet (bud: {assigned.CourierName})! Din mad er på vej!");
                     }
                 }
             }
@@ -77,7 +77,7 @@ public class OrderUpdateConsumer : BackgroundService
         var order = await db.Orders.FindAsync(orderId);
         if (order != null)
         {
-            // IDEMPOTENS & STATE CHECK: 
+           
             // Hvis ordren allerede er "CourierAssigned", skal vi ikke sætte den tilbage til "Confirmed"
             if (order.Status == "CourierAssigned" && status == "Confirmed")
             {

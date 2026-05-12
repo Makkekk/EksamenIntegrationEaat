@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using RabbitMQ.Client;
 
 namespace CourierService.Messaging;
