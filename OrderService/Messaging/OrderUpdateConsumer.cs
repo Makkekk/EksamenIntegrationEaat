@@ -77,6 +77,20 @@ public class OrderUpdateConsumer : BackgroundService
         var order = await db.Orders.FindAsync(orderId);
         if (order != null)
         {
+            // IDEMPOTENS & STATE CHECK: 
+            // Hvis ordren allerede er "CourierAssigned", skal vi ikke sætte den tilbage til "Confirmed"
+            if (order.Status == "CourierAssigned" && status == "Confirmed")
+            {
+                Console.WriteLine($" [IDEMPOTENS] Ignorerer 'Confirmed' besked da ordre #{orderId} allerede har 'CourierAssigned'.");
+                return;
+            }
+
+            if (order.Status == status)
+            {
+                Console.WriteLine($" [IDEMPOTENS] Ordre #{orderId} er allerede i status '{status}'.");
+                return;
+            }
+
             order.Status = status;
             if (restaurantName != null) order.RestaurantName = restaurantName;
             if (courierName != null) order.CourierName = courierName;

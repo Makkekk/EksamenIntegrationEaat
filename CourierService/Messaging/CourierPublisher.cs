@@ -1,15 +1,14 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using RabbitMQ.Client;
 
+namespace CourierService.Messaging;
 
-namespace OrderService.Messaging;
-
-public class OrderPublisher
+public class CourierPublisher
 {
     private readonly string hostname = "localhost";
 
-    public async Task PublishOrderCreatedAsync(object orderEvent)
+    public async Task PublishAsync(string routingKey, string content)
     {
         var factory = new ConnectionFactory
         {
@@ -20,14 +19,13 @@ public class OrderPublisher
 
         await channel.ExchangeDeclareAsync(exchange: "eaat_exchange", type: ExchangeType.Topic);
         
-        var message = JsonSerializer.Serialize(orderEvent);
-        var body = Encoding.UTF8.GetBytes(message);
+        var body = Encoding.UTF8.GetBytes(content);
 
         await channel.BasicPublishAsync(
             exchange: "eaat_exchange",
-            routingKey: "order.created",
+            routingKey: routingKey,
             body: body);
         
-        Console.WriteLine($" [x] Besked send: {message}" );
+        Console.WriteLine($" [OUTBOX] Besked sendt med routing key '{routingKey}': {content}");
     }
 }

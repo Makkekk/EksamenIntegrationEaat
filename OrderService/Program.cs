@@ -12,8 +12,9 @@ builder.Services.AddDbContext<OrderDbContext>(options =>
     options.UseInMemoryDatabase("OrderDb"));
 
 builder.Services.AddOpenApi();
-builder.Services.AddScoped<OrderPublisher>();
+builder.Services.AddSingleton<OrderPublisher>();
 builder.Services.AddHostedService<OrderUpdateConsumer>();
+builder.Services.AddHostedService<OutboxProcessor>();
 
 
 var app = builder.Build();
@@ -24,7 +25,7 @@ if (app.Environment.IsDevelopment())
     app.MapScalarApiReference();
 }
 
-app.MapPost("/order", async (OrderPublisher orderPublisher, OrderDbContext db) =>
+app.MapPost("/order", async (OrderDbContext db) =>
 {
     var orderId = Guid.NewGuid();
     var customerName = "Søren Sørensen";
@@ -36,12 +37,21 @@ app.MapPost("/order", async (OrderPublisher orderPublisher, OrderDbContext db) =
         Status = "Created"
     };
 
+    
     db.Orders.Add(order);
+    
+    var orderCreatedEvent = new OrderCreated(orderId, customerName);
+    var outboxMessage = new OutboxMessage
+    {
+        Id = Guid.NewGuid(),
+        Type = "OrderCreated",
+        Content = System.Text.Json.JsonSerializer.Serialize(orderCreatedEvent),
+        CreatedAt = DateTime.UtcNow
+    };
+    db.OutboxMessages.Add(outboxMessage);
+    
     await db.SaveChangesAsync();
 
-    var orderCreated = new OrderCreated(orderId, customerName);
-    await orderPublisher.PublishOrderCreatedAsync(orderCreated);
-    
     return Results.Ok(order);
 });
 

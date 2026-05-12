@@ -2,6 +2,7 @@
 using System.Text.Json;
 using Contracts;
 using CourierService.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RabbitMQ.Client;
@@ -29,7 +30,7 @@ public class CourierConsumer : BackgroundService
         await channel.QueueDeclareAsync("courier_queue", durable: true, exclusive: false, autoDelete: false,
             cancellationToken: stoppingToken);
 
-        // Lytter på bekræftede ordrer fra restauranten
+      
         await channel.QueueBindAsync("courier_queue", "eaat_exchange", "order.confirmed", cancellationToken: stoppingToken);
         await channel.QueueBindAsync("courier_queue", "eaat_exchange", "courier.broadcast.taken", cancellationToken: stoppingToken);
         var consumer = new AsyncEventingBasicConsumer(channel);
@@ -48,16 +49,27 @@ public class CourierConsumer : BackgroundService
                     using var scope = _scopeFactory.CreateScope();
                     var db = scope.ServiceProvider.GetRequiredService<CourierDbContext>();
 
-                    // Gem ordren som et tilbud i databasen
-                    db.DeliveryOffers.Add(new DeliveryOffer
-                    {
-                        OrderId = order.OrderId,
-                        RestaurantName = order.RestaurantName,
-                        IsAssigned = false
-                    });
+                    // IDEMPOTENS: Tjek om vi allerede har behandlet denne ordre
+                    var existingOffer = await db.DeliveryOffers
+                        .FirstOrDefaultAsync(o => o.OrderId == order.OrderId, cancellationToken: stoppingToken);
 
-                    await db.SaveChangesAsync(stoppingToken);
-                    Console.WriteLine($" [DB] Ordre #{order.OrderId} gemt i databasen og klar til bud!");
+                    if (existingOffer == null)
+                    {
+                        // Gem ordren som et tilbud i databasen
+                        db.DeliveryOffers.Add(new DeliveryOffer
+                        {
+                            OrderId = order.OrderId,
+                            RestaurantName = order.RestaurantName,
+                            IsAssigned = false
+                        });
+
+                        await db.SaveChangesAsync(stoppingToken);
+                        Console.WriteLine($" [DB] Ordre #{order.OrderId} gemt i databasen og klar til bud!");
+                    }
+                    else
+                    {
+                        Console.WriteLine($" [IDEMPOTENS] Ordre #{order.OrderId} er allerede modtaget. Springer over.");
+                    }
                 }
             }
 
